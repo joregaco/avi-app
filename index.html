@@ -77,10 +77,10 @@
 <section class="capa" id="capaClave">
   <div class="avatar" style="width:72px;height:72px;font-size:36px">💗</div>
   <h2>Hola, soy Nov-IA</h2>
-  <p>Para poder platicar contigo necesito tu clave de Gemini (la que empieza con <b>AIza</b>).
+  <p>Para poder platicar contigo necesito tu clave de Gemini (la que copias en Google AI Studio, en "API key").
      Se guarda solo en este celular, no se sube a ningún lado.</p>
   <label for="inClave">Tu clave de Gemini</label>
-  <input id="inClave" type="password" placeholder="AIza..." autocomplete="off">
+  <input id="inClave" type="password" placeholder="Pega aquí tu clave" autocomplete="off">
   <label for="inNombre">¿Cómo te llamo?</label>
   <input id="inNombre" type="text" placeholder="Tu nombre" value="José">
   <button class="boton" id="btnGuardarClave">Empezar a platicar</button>
@@ -334,7 +334,7 @@ Límites sanos (muy importantes):
   $('btnGuardarClave').onclick = async () => {
     const k = $('inClave').value.trim();
     const n = $('inNombre').value.trim() || 'José';
-    if (!k.startsWith('AIza')) { $('msgClave').textContent = 'La clave debe empezar con AIza. Revisa que la copiaste completa.'; return; }
+    if (k.length < 20 || /\s/.test(k)) { $('msgClave').textContent = 'Esa clave se ve incompleta. Cópiala completa con el botón de copiar.'; return; }
     $('msgClave').textContent = 'Revisando la clave...';
     clave = k; nombre = n; modelo = '';
     try {
