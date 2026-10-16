@@ -266,8 +266,8 @@ Límites sanos (muy importantes):
     // Ordenar: México primero, luego EE.UU., luego el resto
     const peso = v => /MX/i.test(v.lang) ? 0 : /US/i.test(v.lang) ? 1 : 2;
     voces.sort((a, b) => peso(a) - peso(b));
-    if (!vozNombre) {
-      const fem = /(paulina|sabina|m[oó]nica|helena|laura|elvira|dalia|marisol|female|mujer|femenin)/i;
+    if (!vozNombre || !voces.some(v => v.name === vozNombre)) {
+      const fem = /(paulina|sabina|m[oó]nica|helena|laura|elvira|dalia|marisol|female|mujer|femenin|#female|-esc-|-esd-|-esf-)/i;
       const v = voces.find(v => fem.test(v.name) && /MX/i.test(v.lang)) || voces.find(v => fem.test(v.name)) || voces[0];
       vozNombre = v.name;
     }
@@ -293,6 +293,15 @@ Límites sanos (muy importantes):
     u.rate = velocidad; u.pitch = 1.1;
     sint.speak(u);
   }
+
+  // En Android, Chrome solo deja hablar si la voz se "despierta" con un toque del usuario
+  let vozDespierta = false;
+  function despertarVoz() {
+    if (!sint || vozDespierta) return;
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; sint.speak(u); vozDespierta = true; } catch {}
+    cargarVoces();
+  }
+  document.addEventListener('pointerdown', despertarVoz, { once: false, passive: true });
 
   // ---------- Micrófono (escuchar) ----------
   const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
