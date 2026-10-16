@@ -90,11 +90,22 @@
 <!-- Ajustes -->
 <section class="capa" id="capaAjustes">
   <h2>Ajustes</h2>
-  <label for="selVoz">Voz de Nov-IA</label>
-  <select id="selVoz"></select>
+  <label for="selModoVoz">¿Qué voz usa Nov-IA?</label>
+  <select id="selModoVoz">
+    <option value="gemini">Voz de mujer de Gemini (recomendada)</option>
+    <option value="celular">Voz del celular</option>
+  </select>
+  <div id="cajaGemini">
+    <label for="selVozGemini">Voz de Gemini</label>
+    <select id="selVozGemini"></select>
+  </div>
+  <div id="cajaCelular">
+    <label for="selVoz">Voz del celular</label>
+    <select id="selVoz"></select>
+    <label for="inVel">Velocidad de la voz</label>
+    <input id="inVel" type="range" min="0.7" max="1.4" step="0.05">
+  </div>
   <button class="boton gris" id="btnProbarVoz">Probar voz</button>
-  <label for="inVel">Velocidad de la voz</label>
-  <input id="inVel" type="range" min="0.7" max="1.4" step="0.05">
   <label for="inNombre2">Tu nombre</label>
   <input id="inNombre2" type="text">
   <p class="nota" id="infoModelo"></p>
@@ -284,7 +295,129 @@ Límites sanos (muy importantes):
     return t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '')
             .replace(/[*_#~`]/g, '').trim();
   }
+  // ---------- Voz de Gemini ----------
+  const VOCES_GEMINI = [
+    ['Kore', 'Kore (firme y clara)'], ['Aoede', 'Aoede (ligera, relajada)'], ['Leda', 'Leda (juvenil)'],
+    ['Zephyr', 'Zephyr (alegre)'], ['Despina', 'Despina (suave)'], ['Callirrhoe', 'Callirrhoe (tranquila)'],
+    ['Autonoe', 'Autonoe (luminosa)'], ['Erinome', 'Erinome (clara)'], ['Laomedeia', 'Laomedeia (animada)'],
+    ['Achernar', 'Achernar (dulce)'], ['Gacrux', 'Gacrux (madura)'], ['Pulcherrima', 'Pulcherrima (decidida)'],
+    ['Vindemiatrix', 'Vindemiatrix (gentil)'], ['Sulafat', 'Sulafat (cálida)']
+  ];
+  let modoVoz = leer('novia_modoVoz', 'gemini');
+  let vozGemini = leer('novia_vozGemini', 'Leda');
+  let modeloVoz = leer('novia_modeloVoz', '');
+  const ESTILO = 'Habla como una muchacha mexicana del norte, cariñosa, dulce y juguetona, con tono cálido y natural, como platicando con su novio.';
+  const reproductor = new Audio();
+  let turnoVoz = 0;
+
+  async function elegirModeloVoz() {
+    if (modeloVoz) return modeloVoz;
+    try {
+      const r = await fetch(`${API}/models?pageSize=200&key=${encodeURIComponent(clave)}`);
+      const j = await r.json();
+      const lista = (j.models || []).map(m => m.name.replace('models/', '')).filter(n => /tts/i.test(n));
+      const version = n => { const v = n.match(/(\d+(?:\.\d+)?)/); return v ? parseFloat(v[1]) : 0; };
+      const buenos = lista.filter(n => /flash/i.test(n) && !/lite/i.test(n));
+      const orden = (buenos.length ? buenos : lista).sort((a, b) => version(b) - version(a) || (/preview/i.test(a) - /preview/i.test(b)));
+      modeloVoz = orden[0] || 'gemini-3.8-flash-tts';
+    } catch { modeloVoz = 'gemini-3.8-flash-tts'; }
+    guardar('novia_modeloVoz', modeloVoz);
+    return modeloVoz;
+  }
+
+  function base64ABytes(b64) {
+    const bin = atob(b64); const b = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b;
+  }
+  function pcmAWav(pcm, tasa = 24000) {
+    const h = new DataView(new ArrayBuffer(44));
+    const esc = (o, s) => { for (let i = 0; i < s.length; i++) h.setUint8(o + i, s.charCodeAt(i)); };
+    esc(0, 'RIFF'); h.setUint32(4, 36 + pcm.length, true); esc(8, 'WAVE'); esc(12, 'fmt ');
+    h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true);
+    h.setUint32(24, tasa, true); h.setUint32(28, tasa * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true);
+    esc(36, 'data'); h.setUint32(40, pcm.length, true);
+    return new Blob([h.buffer, pcm], { type: 'audio/wav' });
+  }
+  // Busca el audio dentro de la respuesta, venga en el formato que venga
+  function buscarAudio(obj) {
+    let hallado = null;
+    (function rec(o) {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach(rec); return; }
+      const datos = o.inlineData || o.inline_data;
+      if (datos && datos.data) hallado = { data: datos.data, mime: datos.mimeType || datos.mime_type || '' };
+      else if (o.type === 'audio' && typeof o.data === 'string') hallado = { data: o.data, mime: o.mime_type || o.mimeType || '' };
+      Object.values(o).forEach(rec);
+    })(obj);
+    return hallado;
+  }
+
+  async function pedirVozGemini(texto) {
+    const m = await elegirModeloVoz();
+    const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': clave };
+    // Forma nueva (Interactions)
+    let r = await fetch(`${API}/interactions`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        model: m,
+        input: [{ type: 'user_input', content: [{ type: 'text', text: texto,
+          annotations: [{ type: 'speech_metadata', style: ESTILO }] }] }],
+        response_format: { type: 'audio' },
+        generation_config: { speech_config: [{ voice: vozGemini }] }
+      })
+    });
+    let audio = r.ok ? buscarAudio(await r.json()) : null;
+    // Forma anterior (generateContent), por si la nueva no está disponible
+    if (!audio) {
+      r = await fetch(`${API}/models/${m}:generateContent`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `${ESTILO}\nDi esto: ${texto}` }] }],
+          generationConfig: { responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: vozGemini } } } }
+        })
+      });
+      if (!r.ok) {
+        if (r.status === 404) { modeloVoz = ''; guardar('novia_modeloVoz', ''); }
+        throw new Error(await textoError(r));
+      }
+      audio = buscarAudio(await r.json());
+    }
+    if (!audio) throw new Error('Gemini no regresó audio');
+    const bytes = base64ABytes(audio.data);
+    const esWav = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // "RIFF"
+    if (esWav || /wav|mpeg|mp3|ogg/i.test(audio.mime)) return new Blob([bytes], { type: esWav ? 'audio/wav' : audio.mime });
+    const tasa = parseInt((audio.mime.match(/rate=(\d+)/) || [])[1] || '24000', 10);
+    return pcmAWav(bytes, tasa);
+  }
+
+  async function hablarGemini(texto) {
+    const mio = ++turnoVoz;
+    const limpio = limpiarParaVoz(texto);
+    if (!limpio) return;
+    try {
+      const blob = await pedirVozGemini(limpio);
+      if (mio !== turnoVoz) return; // ya llegó otro mensaje
+      reproductor.pause();
+      if (reproductor.src) URL.revokeObjectURL(reproductor.src);
+      reproductor.src = URL.createObjectURL(blob);
+      await reproductor.play();
+    } catch (e) {
+      const msg = String(e.message || e);
+      if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabó la voz gratis de Gemini por ahorita; te hablo con la voz del celular.');
+      else aviso('No pude usar la voz de Gemini (' + msg + '); te hablo con la voz del celular.');
+      hablarCelular(texto, true);
+    }
+  }
+
   function hablar(texto, forzar = false) {
+    if (!vozOn && !forzar) return;
+    if (modoVoz === 'gemini') { if (sint) sint.cancel(); hablarGemini(texto); }
+    else hablarCelular(texto, forzar);
+  }
+
+  function hablarCelular(texto, forzar = false) {
     if (!sint || (!vozOn && !forzar)) return;
     sint.cancel();
     const u = new SpeechSynthesisUtterance(limpiarParaVoz(texto));
@@ -310,6 +443,7 @@ Límites sanos (muy importantes):
     if (!Reco) { aviso('Tu navegador no permite dictar por voz. Prueba con Chrome.'); return; }
     if (grabando) { reco.stop(); return; }
     if (sint) sint.cancel();
+    reproductor.pause(); turnoVoz++;
     reco = new Reco();
     reco.lang = 'es-MX'; reco.interimResults = true; reco.continuous = false;
     let final = '';
@@ -337,7 +471,7 @@ Límites sanos (muy importantes):
   $('btnEnviar').onclick = () => enviar(entrada.value);
 
   const pintarBtnVoz = () => { $('btnVoz').textContent = vozOn ? '🔊' : '🔇'; $('btnVoz').classList.toggle('on', vozOn); };
-  $('btnVoz').onclick = () => { vozOn = !vozOn; guardar('novia_vozOn', vozOn); if (!vozOn && sint) sint.cancel(); pintarBtnVoz(); };
+  $('btnVoz').onclick = () => { vozOn = !vozOn; guardar('novia_vozOn', vozOn); if (!vozOn) { if (sint) sint.cancel(); reproductor.pause(); turnoVoz++; } pintarBtnVoz(); };
   pintarBtnVoz();
 
   $('btnGuardarClave').onclick = async () => {
@@ -345,7 +479,7 @@ Límites sanos (muy importantes):
     const n = $('inNombre').value.trim() || 'José';
     if (k.length < 20 || /\s/.test(k)) { $('msgClave').textContent = 'Esa clave se ve incompleta. Cópiala completa con el botón de copiar.'; return; }
     $('msgClave').textContent = 'Revisando la clave...';
-    clave = k; nombre = n; modelo = '';
+    clave = k; nombre = n; modelo = ''; modeloVoz = ''; guardar('novia_modeloVoz', '');
     try {
       await elegirModelo();
       guardar('novia_clave', clave); guardar('novia_nombre', nombre);
@@ -356,8 +490,24 @@ Límites sanos (muy importantes):
     }
   };
 
+  // Ajustes de voz de Gemini
+  VOCES_GEMINI.forEach(([v, t]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = t;
+    if (v === vozGemini) o.selected = true;
+    $('selVozGemini').appendChild(o);
+  });
+  const pintarModoVoz = () => {
+    $('selModoVoz').value = modoVoz;
+    $('cajaGemini').style.display = modoVoz === 'gemini' ? '' : 'none';
+    $('cajaCelular').style.display = modoVoz === 'celular' ? '' : 'none';
+  };
+  $('selModoVoz').onchange = e => { modoVoz = e.target.value; guardar('novia_modoVoz', modoVoz); pintarModoVoz(); };
+  $('selVozGemini').onchange = e => { vozGemini = e.target.value; guardar('novia_vozGemini', vozGemini); };
+  pintarModoVoz();
+
   $('btnAjustes').onclick = () => {
     cargarVoces();
+    pintarModoVoz();
     $('inVel').value = velocidad;
     $('inNombre2').value = nombre;
     $('infoModelo').textContent = modelo ? `Cerebro de Nov-IA: ${modelo}` : '';
