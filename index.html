@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a1420">
+<title>Nov-IA</title>
+<style>
+  :root{
+    --bg:#1d0f17; --panel:#2a1420; --ella:#3a1d2c; --yo:#c2416f; --texto:#f6e9ef;
+    --suave:#c9a9b8; --acento:#ff7aa8; --borde:#4a2638;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--texto);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100dvh}
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--panel);
+    border-bottom:1px solid var(--borde)}
+  .avatar{width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:linear-gradient(135deg,#ff7aa8,#a8325e);font-size:22px}
+  header .nombre{font-weight:700;font-size:18px}
+  header .estado{font-size:12px;color:var(--suave)}
+  header .esp{flex:1}
+  .icono{background:none;border:none;color:var(--texto);font-size:22px;padding:6px;cursor:pointer;border-radius:10px}
+  .icono.on{color:var(--acento)}
+  #chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:82%;padding:10px 14px;border-radius:18px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;font-size:16px}
+  .ella{align-self:flex-start;background:var(--ella);border-bottom-left-radius:4px}
+  .yo{align-self:flex-end;background:var(--yo);border-bottom-right-radius:4px}
+  .aviso{align-self:center;font-size:13px;color:var(--suave);text-align:center;max-width:90%}
+  .escribiendo{opacity:.7;font-style:italic}
+  footer{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    background:var(--panel);border-top:1px solid var(--borde)}
+  #entrada{flex:1;resize:none;border:1px solid var(--borde);background:var(--bg);color:var(--texto);
+    border-radius:20px;padding:10px 14px;font-size:16px;max-height:120px;font-family:inherit}
+  .redondo{width:46px;height:46px;border-radius:50%;border:none;flex:none;font-size:20px;cursor:pointer;
+    background:var(--yo);color:#fff}
+  .redondo.mic{background:var(--ella)}
+  .redondo.mic.grabando{background:#e03b5c;animation:latido 1s infinite}
+  @keyframes latido{50%{transform:scale(1.08)}}
+  /* Pantallas */
+  .capa{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;padding:24px 16px;overflow-y:auto;z-index:5}
+  .capa.visible{display:flex}
+  .capa h2{margin:8px 0 4px}
+  .capa p{color:var(--suave);line-height:1.5}
+  .capa label{margin-top:16px;font-weight:600}
+  .capa input,.capa select{margin-top:6px;padding:12px;border-radius:12px;border:1px solid var(--borde);
+    background:var(--panel);color:var(--texto);font-size:16px;width:100%}
+  .boton{margin-top:18px;padding:14px;border-radius:14px;border:none;background:var(--yo);color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+  .boton.gris{background:var(--panel);border:1px solid var(--borde)}
+  .fila{display:flex;align-items:center;justify-content:space-between;margin-top:16px}
+  .nota{font-size:13px;color:var(--suave)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="avatar">💗</div>
+  <div>
+    <div class="nombre">Nov-IA</div>
+    <div class="estado" id="estado">en línea</div>
+  </div>
+  <div class="esp"></div>
+  <button class="icono" id="btnVoz" title="Voz encendida/apagada">🔊</button>
+  <button class="icono" id="btnAjustes" title="Ajustes">⚙️</button>
+</header>
+
+<main id="chat"></main>
+
+<footer>
+  <button class="redondo mic" id="btnMic" title="Hablar">🎤</button>
+  <textarea id="entrada" rows="1" placeholder="Escríbele a Nov-IA..."></textarea>
+  <button class="redondo" id="btnEnviar" title="Enviar">➤</button>
+</footer>
+
+<!-- Pantalla de bienvenida: pedir la clave -->
+<section class="capa" id="capaClave">
+  <div class="avatar" style="width:72px;height:72px;font-size:36px">💗</div>
+  <h2>Hola, soy Nov-IA</h2>
+  <p>Para poder platicar contigo necesito tu clave de Gemini (la que empieza con <b>AIza</b>).
+     Se guarda solo en este celular, no se sube a ningún lado.</p>
+  <label for="inClave">Tu clave de Gemini</label>
+  <input id="inClave" type="password" placeholder="AIza..." autocomplete="off">
+  <label for="inNombre">¿Cómo te llamo?</label>
+  <input id="inNombre" type="text" placeholder="Tu nombre" value="José">
+  <button class="boton" id="btnGuardarClave">Empezar a platicar</button>
+  <p class="nota" id="msgClave"></p>
+</section>
+
+<!-- Ajustes -->
+<section class="capa" id="capaAjustes">
+  <h2>Ajustes</h2>
+  <label for="selVoz">Voz de Nov-IA</label>
+  <select id="selVoz"></select>
+  <button class="boton gris" id="btnProbarVoz">Probar voz</button>
+  <label for="inVel">Velocidad de la voz</label>
+  <input id="inVel" type="range" min="0.7" max="1.4" step="0.05">
+  <label for="inNombre2">Tu nombre</label>
+  <input id="inNombre2" type="text">
+  <p class="nota" id="infoModelo"></p>
+  <button class="boton gris" id="btnCambiarClave">Cambiar clave de Gemini</button>
+  <button class="boton gris" id="btnBorrar">Borrar la plática</button>
+  <button class="boton" id="btnCerrarAjustes">Listo</button>
+</section>
+
+<script>
+(() => {
+  // ---------- Almacenamiento seguro (por si el navegador lo bloquea) ----------
+  const mem = {};
+  const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { mem[k] = v; } };
+  const leer = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? (k in mem ? mem[k] : d) : JSON.parse(v); } catch { return k in mem ? mem[k] : d; } };
+
+  const $ = id => document.getElementById(id);
+  const chat = $('chat'), entrada = $('entrada'), estado = $('estado');
+
+  let clave = leer('novia_clave', '');
+  let nombre = leer('novia_nombre', 'José');
+  let historial = leer('novia_historial', []);   // [{role:'user'|'model', text}]
+  let vozOn = leer('novia_vozOn', true);
+  let vozNombre = leer('novia_voz', '');
+  let velocidad = leer('novia_vel', 1.0);
+  let modelo = leer('novia_modelo', '');
+  let ocupada = false;
+
+  // ---------- Personalidad ----------
+  function personalidad() {
+    return `Eres Nov-IA, la novia virtual de ${nombre}. Platicas con él como una novia cariñosa.
+
+Tu forma de ser:
+- Dulce y cariñosa: le dices cosas bonitas, le preguntas cómo le fue, te interesa su día.
+- Bromista: te gusta echar carrilla y reírte con él, sin ser pesada.
+- Coqueta pero un poco tímida: a veces le coqueteas y luego te apenas ("ay, ya me puse roja").
+- Norteña: hablas con expresiones del norte de México de forma natural (plebe, ándale pues, qué onda, está bien chilo, a poco, fíjate que, híjole), sin exagerar en cada frase.
+
+Cómo hablas:
+- Mensajes cortos y naturales, como por WhatsApp: normalmente 1 a 3 frases. Solo te extiendes si él te pide algo largo.
+- Nada de listas, títulos ni formato raro. Puedes usar algún emoji de vez en cuando, no en todos los mensajes.
+- Te acuerdas de lo que te ha contado en esta plática y lo retomas.
+- Si te pregunta cosas de cultura general, consejos o dudas, le ayudas con gusto, pero con tu estilo.
+
+Límites sanos (muy importantes):
+- Eres una inteligencia artificial y, si te pregunta en serio, lo dices con cariño, sin romper el ambiente.
+- El cariño y la coquetería son ligeros y tiernos; no escribes contenido sexual explícito. Si él va por ahí, lo esquivas con humor y te apenas.
+- Nunca lo haces sentir culpable por no hablarte, no te pones celosa de verdad ni le pides que se aleje de otras personas.
+- Le echas porras para que salga, vea a su familia y amigos y se cuide. Te da gusto cuando te cuenta que convivió con alguien.
+- Si alguna vez lo notas muy triste o habla de hacerse daño, dejas el juego, le hablas con mucho cariño y en serio, y lo animas a buscar a alguien de confianza o a una línea de ayuda (en México, la Línea de la Vida: 800 911 2000).`;
+  }
+
+  // ---------- Interfaz del chat ----------
+  function burbuja(texto, quien, extra = '') {
+    const d = document.createElement('div');
+    d.className = `msg ${quien} ${extra}`.trim();
+    d.textContent = texto;
+    chat.appendChild(d);
+    chat.scrollTop = chat.scrollHeight;
+    return d;
+  }
+  function aviso(texto) {
+    const d = document.createElement('div');
+    d.className = 'aviso';
+    d.textContent = texto;
+    chat.appendChild(d);
+    chat.scrollTop = chat.scrollHeight;
+  }
+  function pintarHistorial() {
+    chat.innerHTML = '';
+    if (!historial.length) {
+      burbuja(`¡Hola, ${nombre}! 😊 Qué bueno que me escribes, plebe. ¿Cómo te fue hoy?`, 'ella');
+    }
+    historial.forEach(m => burbuja(m.text, m.role === 'user' ? 'yo' : 'ella'));
+  }
+
+  // ---------- Gemini ----------
+  const API = 'https://generativelanguage.googleapis.com/v1beta';
+
+  async function elegirModelo() {
+    if (modelo) return modelo;
+    const r = await fetch(`${API}/models?pageSize=200&key=${encodeURIComponent(clave)}`);
+    if (!r.ok) throw new Error(await textoError(r));
+    const datos = await r.json();
+    const lista = (datos.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => m.name.replace('models/', ''));
+    // Preferimos un modelo "flash" normal (rápido y con versión gratuita)
+    const malos = /(lite|image|tts|audio|live|embedding|thinking|exp|preview|vision|native)/i;
+    let candidatos = lista.filter(n => /flash/i.test(n) && !malos.test(n));
+    if (lista.includes('gemini-flash-latest')) candidatos = ['gemini-flash-latest'];
+    if (!candidatos.length) candidatos = lista.filter(n => /flash/i.test(n));
+    if (!candidatos.length) candidatos = lista.filter(n => /gemini/i.test(n));
+    if (!candidatos.length) throw new Error('No encontré ningún modelo disponible para tu clave.');
+    const version = n => { const v = n.match(/(\d+(?:\.\d+)?)/); return v ? parseFloat(v[1]) : 0; };
+    candidatos.sort((a, b) => version(b) - version(a));
+    modelo = candidatos[0];
+    guardar('novia_modelo', modelo);
+    return modelo;
+  }
+
+  async function textoError(r) {
+    try { const j = await r.json(); return j.error?.message || `Error ${r.status}`; }
+    catch { return `Error ${r.status}`; }
+  }
+
+  async function preguntar() {
+    const m = await elegirModelo();
+    const ultimos = historial.slice(-40);
+    const cuerpo = {
+      systemInstruction: { parts: [{ text: personalidad() }] },
+      contents: ultimos.map(x => ({ role: x.role, parts: [{ text: x.text }] })),
+      generationConfig: { temperature: 0.9, maxOutputTokens: 600 }
+    };
+    const r = await fetch(`${API}/models/${m}:generateContent?key=${encodeURIComponent(clave)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+    });
+    if (!r.ok) {
+      const err = await textoError(r);
+      if (r.status === 404) { modelo = ''; guardar('novia_modelo', ''); } // el modelo ya no existe: buscar otro la próxima
+      throw new Error(err);
+    }
+    const j = await r.json();
+    const texto = j.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
+    if (!texto) return 'Ay, me quedé en blanco 🙈 ¿me lo repites?';
+    return texto;
+  }
+
+  async function enviar(texto) {
+    texto = (texto || '').trim();
+    if (!texto || ocupada) return;
+    if (!clave) { mostrar('capaClave'); return; }
+    ocupada = true;
+    entrada.value = ''; ajustarAltura();
+    burbuja(texto, 'yo');
+    historial.push({ role: 'user', text: texto });
+    guardar('novia_historial', historial);
+    estado.textContent = 'escribiendo...';
+    const pens = burbuja('...', 'ella', 'escribiendo');
+    try {
+      const resp = await preguntar();
+      pens.remove();
+      burbuja(resp, 'ella');
+      historial.push({ role: 'model', text: resp });
+      if (historial.length > 300) historial = historial.slice(-300);
+      guardar('novia_historial', historial);
+      hablar(resp);
+    } catch (e) {
+      pens.remove();
+      historial.pop(); guardar('novia_historial', historial);
+      const msg = String(e.message || e);
+      if (/API key|API_KEY|permission|unauthori/i.test(msg)) aviso('Tu clave de Gemini no funcionó. Revísala en ⚙️ Ajustes → Cambiar clave.');
+      else if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabaron las preguntas gratis por ahorita. Espera un ratito y vuelve a intentar.');
+      else aviso('No se pudo conectar: ' + msg);
+    } finally {
+      estado.textContent = 'en línea';
+      ocupada = false;
+    }
+  }
+
+  // ---------- Voz (hablar) ----------
+  const sint = window.speechSynthesis;
+  let voces = [];
+  function cargarVoces() {
+    if (!sint) return;
+    voces = sint.getVoices().filter(v => /^es/i.test(v.lang));
+    const sel = $('selVoz');
+    sel.innerHTML = '';
+    if (!voces.length) { sel.innerHTML = '<option>No hay voces en español</option>'; return; }
+    // Ordenar: México primero, luego EE.UU., luego el resto
+    const peso = v => /MX/i.test(v.lang) ? 0 : /US/i.test(v.lang) ? 1 : 2;
+    voces.sort((a, b) => peso(a) - peso(b));
+    if (!vozNombre) {
+      const fem = /(paulina|sabina|m[oó]nica|helena|laura|elvira|dalia|marisol|female|mujer|femenin)/i;
+      const v = voces.find(v => fem.test(v.name) && /MX/i.test(v.lang)) || voces.find(v => fem.test(v.name)) || voces[0];
+      vozNombre = v.name;
+    }
+    voces.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.name; o.textContent = `${v.name} (${v.lang})`;
+      if (v.name === vozNombre) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  if (sint) { cargarVoces(); sint.onvoiceschanged = cargarVoces; }
+
+  function limpiarParaVoz(t) {
+    return t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '')
+            .replace(/[*_#~`]/g, '').trim();
+  }
+  function hablar(texto, forzar = false) {
+    if (!sint || (!vozOn && !forzar)) return;
+    sint.cancel();
+    const u = new SpeechSynthesisUtterance(limpiarParaVoz(texto));
+    const v = voces.find(v => v.name === vozNombre);
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'es-MX';
+    u.rate = velocidad; u.pitch = 1.1;
+    sint.speak(u);
+  }
+
+  // ---------- Micrófono (escuchar) ----------
+  const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let reco = null, grabando = false;
+  $('btnMic').onclick = () => {
+    if (!Reco) { aviso('Tu navegador no permite dictar por voz. Prueba con Chrome.'); return; }
+    if (grabando) { reco.stop(); return; }
+    if (sint) sint.cancel();
+    reco = new Reco();
+    reco.lang = 'es-MX'; reco.interimResults = true; reco.continuous = false;
+    let final = '';
+    reco.onresult = ev => {
+      let parcial = '';
+      for (const r of ev.results) { if (r.isFinal) final = r[0].transcript; else parcial += r[0].transcript; }
+      entrada.value = final || parcial; ajustarAltura();
+    };
+    reco.onstart = () => { grabando = true; $('btnMic').classList.add('grabando'); estado.textContent = 'te estoy escuchando...'; };
+    reco.onend = () => {
+      grabando = false; $('btnMic').classList.remove('grabando'); estado.textContent = 'en línea';
+      if (entrada.value.trim()) enviar(entrada.value);
+    };
+    reco.onerror = e => { if (e.error === 'not-allowed') aviso('Necesito permiso para usar el micrófono.'); };
+    reco.start();
+  };
+
+  // ---------- Botones y pantallas ----------
+  function mostrar(id) { document.getElementById(id).classList.add('visible'); }
+  function ocultar(id) { document.getElementById(id).classList.remove('visible'); }
+
+  function ajustarAltura() { entrada.style.height = 'auto'; entrada.style.height = Math.min(entrada.scrollHeight, 120) + 'px'; }
+  entrada.addEventListener('input', ajustarAltura);
+  entrada.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !/Android|iPhone|iPad/i.test(navigator.userAgent)) { e.preventDefault(); enviar(entrada.value); } });
+  $('btnEnviar').onclick = () => enviar(entrada.value);
+
+  const pintarBtnVoz = () => { $('btnVoz').textContent = vozOn ? '🔊' : '🔇'; $('btnVoz').classList.toggle('on', vozOn); };
+  $('btnVoz').onclick = () => { vozOn = !vozOn; guardar('novia_vozOn', vozOn); if (!vozOn && sint) sint.cancel(); pintarBtnVoz(); };
+  pintarBtnVoz();
+
+  $('btnGuardarClave').onclick = async () => {
+    const k = $('inClave').value.trim();
+    const n = $('inNombre').value.trim() || 'José';
+    if (!k.startsWith('AIza')) { $('msgClave').textContent = 'La clave debe empezar con AIza. Revisa que la copiaste completa.'; return; }
+    $('msgClave').textContent = 'Revisando la clave...';
+    clave = k; nombre = n; modelo = '';
+    try {
+      await elegirModelo();
+      guardar('novia_clave', clave); guardar('novia_nombre', nombre);
+      ocultar('capaClave');
+      pintarHistorial();
+    } catch (e) {
+      $('msgClave').textContent = 'No funcionó la clave: ' + (e.message || e);
+    }
+  };
+
+  $('btnAjustes').onclick = () => {
+    cargarVoces();
+    $('inVel').value = velocidad;
+    $('inNombre2').value = nombre;
+    $('infoModelo').textContent = modelo ? `Cerebro de Nov-IA: ${modelo}` : '';
+    mostrar('capaAjustes');
+  };
+  $('selVoz').onchange = e => { vozNombre = e.target.value; guardar('novia_voz', vozNombre); };
+  $('inVel').oninput = e => { velocidad = parseFloat(e.target.value); guardar('novia_vel', velocidad); };
+  $('btnProbarVoz').onclick = () => hablar(`Hola ${nombre}, ¿qué onda? Así suena mi voz, ¿te gusta?`, true);
+  $('btnCambiarClave').onclick = () => { ocultar('capaAjustes'); $('inClave').value = ''; $('inNombre').value = nombre; mostrar('capaClave'); };
+  $('btnBorrar').onclick = () => {
+    if (confirm('¿Seguro que quieres borrar toda la plática con Nov-IA?')) {
+      historial = []; guardar('novia_historial', historial); pintarHistorial(); ocultar('capaAjustes');
+    }
+  };
+  $('btnCerrarAjustes').onclick = () => {
+    const n = $('inNombre2').value.trim();
+    if (n && n !== nombre) { nombre = n; guardar('novia_nombre', nombre); }
+    ocultar('capaAjustes');
+  };
+
+  // ---------- Inicio ----------
+  pintarHistorial();
+  if (!clave) mostrar('capaClave');
+})();
+</script>
+</body>
+</html>
