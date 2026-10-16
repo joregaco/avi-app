@@ -319,21 +319,34 @@ Límites sanos (muy importantes):
   const ESTILO = 'Habla como una muchacha sencilla de un pueblo de Zacatecas, con acento norteño mexicano relajado y cantadito. Tono cálido, tranquilo y cariñoso, natural y sin actuar, como platicando en confianza con su novio. Nada de voz de actriz ni exagerada.';
   const reproductor = new Audio();
   let turnoVoz = 0;
+  let avisoVozMostrado = false;
 
-  async function elegirModeloVoz() {
-    if (modeloVoz) return modeloVoz;
+  // Todos los modelos de voz disponibles, del mejor al más sencillo.
+  // Cada uno tiene su propio límite gratis: si uno se agota, se intenta el siguiente.
+  let modelosVoz = null;
+  const agotados = leer('novia_vozAgotados', {}); // { modelo: fecha }
+  const hoy = () => new Date().toISOString().slice(0, 10);
+  async function listaModelosVoz() {
+    if (modelosVoz) return modelosVoz;
     try {
       const r = await fetch(`${API}/models?pageSize=200&key=${encodeURIComponent(clave)}`);
       const j = await r.json();
       const lista = (j.models || []).map(m => m.name.replace('models/', '')).filter(n => /tts/i.test(n));
       const version = n => { const v = n.match(/(\d+(?:\.\d+)?)/); return v ? parseFloat(v[1]) : 0; };
-      const buenos = lista.filter(n => /flash/i.test(n) && !/lite/i.test(n));
-      const orden = (buenos.length ? buenos : lista).sort((a, b) => version(b) - version(a) || (/preview/i.test(a) - /preview/i.test(b)));
-      modeloVoz = orden[0] || 'gemini-3.8-flash-tts';
-    } catch { modeloVoz = 'gemini-3.8-flash-tts'; }
-    guardar('novia_modeloVoz', modeloVoz);
+      const puntos = n => version(n) * 10 + (/pro/i.test(n) ? 3 : /lite/i.test(n) ? 0 : 2) - (/preview/i.test(n) ? 1 : 0);
+      modelosVoz = lista.sort((a, b) => puntos(b) - puntos(a));
+    } catch { modelosVoz = []; }
+    if (!modelosVoz.length) modelosVoz = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+    return modelosVoz;
+  }
+  async function elegirModeloVoz() {
+    const lista = await listaModelosVoz();
+    const libre = lista.find(m => agotados[m] !== hoy());
+    if (!libre) throw new Error('quota: se acabó la voz gratis de todos los modelos por hoy');
+    modeloVoz = libre;
     return modeloVoz;
   }
+  function marcarAgotado(m) { agotados[m] = hoy(); guardar('novia_vozAgotados', agotados); }
 
   function base64ABytes(b64) {
     const bin = atob(b64); const b = new Uint8Array(bin.length);
@@ -364,7 +377,19 @@ Límites sanos (muy importantes):
   }
 
   async function pedirVozGemini(texto) {
-    const m = await elegirModeloVoz();
+    for (let intento = 0; intento < 6; intento++) {
+      const m = await elegirModeloVoz();
+      try { return await pedirVozConModelo(texto, m); }
+      catch (e) {
+        const msg = String(e.message || e);
+        if (/quota|rate|exhausted|429|not found|404|not supported/i.test(msg)) { marcarAgotado(m); continue; }
+        throw e;
+      }
+    }
+    throw new Error('quota: se acabó la voz gratis por hoy');
+  }
+
+  async function pedirVozConModelo(texto, m) {
     const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': clave };
     // Forma nueva (Interactions)
     let r = await fetch(`${API}/interactions`, {
@@ -377,6 +402,7 @@ Límites sanos (muy importantes):
         generation_config: { speech_config: [{ voice: vozGemini }] }
       })
     });
+    if (r.status === 429) throw new Error('429 quota');
     let audio = r.ok ? buscarAudio(await r.json()) : null;
     // Forma anterior (generateContent), por si la nueva no está disponible
     if (!audio) {
@@ -388,10 +414,7 @@ Límites sanos (muy importantes):
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: vozGemini } } } }
         })
       });
-      if (!r.ok) {
-        if (r.status === 404) { modeloVoz = ''; guardar('novia_modeloVoz', ''); }
-        throw new Error(await textoError(r));
-      }
+      if (!r.ok) throw new Error(`${r.status} ${await textoError(r)}`);
       audio = buscarAudio(await r.json());
     }
     if (!audio) throw new Error('Gemini no regresó audio');
@@ -413,10 +436,16 @@ Límites sanos (muy importantes):
       if (reproductor.src) URL.revokeObjectURL(reproductor.src);
       reproductor.src = URL.createObjectURL(blob);
       await reproductor.play();
+      avisoVozMostrado = false;
     } catch (e) {
       const msg = String(e.message || e);
-      if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabó la voz gratis de Gemini por ahorita; te hablo con la voz del celular.');
-      else aviso('No pude usar la voz de Gemini (' + msg + '); te hablo con la voz del celular.');
+      const sinVozCel = !sint || !voces.length;
+      const respaldo = sinVozCel ? ' y tu celular no tiene voz instalada, así que hoy solo te escribo.' : '; te hablo con la voz del celular.';
+      if (!avisoVozMostrado) {
+        if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabó la voz gratis de Gemini por hoy (se renueva en la madrugada)' + respaldo);
+        else aviso('No pude usar la voz de Gemini (' + msg + ')' + respaldo);
+        avisoVozMostrado = true;
+      }
       hablarCelular(texto, true);
     }
   }
@@ -489,7 +518,8 @@ Límites sanos (muy importantes):
     const n = $('inNombre').value.trim() || 'José';
     if (k.length < 20 || /\s/.test(k)) { $('msgClave').textContent = 'Esa clave se ve incompleta. Cópiala completa con el botón de copiar.'; return; }
     $('msgClave').textContent = 'Revisando la clave...';
-    clave = k; nombre = n; modelo = ''; modeloVoz = ''; guardar('novia_modeloVoz', '');
+    clave = k; nombre = n; modelo = ''; modeloVoz = ''; modelosVoz = null;
+    for (const x in agotados) delete agotados[x]; guardar('novia_vozAgotados', agotados);
     try {
       await elegirModelo();
       guardar('novia_clave', clave); guardar('novia_nombre', nombre);
