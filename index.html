@@ -194,27 +194,33 @@ Límites sanos (muy importantes):
   // ---------- Gemini ----------
   const API = 'https://generativelanguage.googleapis.com/v1beta';
 
-  async function elegirModelo() {
-    if (modelo) return modelo;
+  // Lista de modelos para platicar, del preferido a los de repuesto
+  let modelosChat = null;
+  async function listaModelosChat() {
+    if (modelosChat) return modelosChat;
     const r = await fetch(`${API}/models?pageSize=200&key=${encodeURIComponent(clave)}`);
     if (!r.ok) throw new Error(await textoError(r));
     const datos = await r.json();
     const lista = (datos.models || [])
       .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map(m => m.name.replace('models/', ''));
-    // Preferimos un modelo "flash" normal (rápido y con versión gratuita)
-    const malos = /(lite|image|tts|audio|live|embedding|thinking|exp|preview|vision|native)/i;
-    let candidatos = lista.filter(n => /flash/i.test(n) && !malos.test(n));
-    if (lista.includes('gemini-flash-latest')) candidatos = ['gemini-flash-latest'];
-    if (!candidatos.length) candidatos = lista.filter(n => /flash/i.test(n));
-    if (!candidatos.length) candidatos = lista.filter(n => /gemini/i.test(n));
-    if (!candidatos.length) throw new Error('No encontré ningún modelo disponible para tu clave.');
+      .map(m => m.name.replace('models/', ''))
+      .filter(n => /gemini/i.test(n) && !/(image|tts|audio|live|embedding|vision|native|robotics|computer)/i.test(n));
+    if (!lista.length) throw new Error('No encontré ningún modelo disponible para tu clave.');
     const version = n => { const v = n.match(/(\d+(?:\.\d+)?)/); return v ? parseFloat(v[1]) : 0; };
-    candidatos.sort((a, b) => version(b) - version(a));
-    modelo = candidatos[0];
+    // Flash normal primero, luego flash-lite, luego el resto; versiones nuevas antes; los "preview" al final
+    const puntos = n => (n === 'gemini-flash-latest' ? 1000 : 0) + version(n) * 10
+      + (/flash/i.test(n) && !/lite/i.test(n) ? 300 : /lite/i.test(n) ? 200 : 0)
+      - (/(preview|exp|thinking)/i.test(n) ? 150 : 0);
+    modelosChat = lista.sort((a, b) => puntos(b) - puntos(a)).slice(0, 4);
+    return modelosChat;
+  }
+  async function elegirModelo() {
+    const lista = await listaModelosChat();
+    modelo = lista[0];
     guardar('novia_modelo', modelo);
     return modelo;
   }
+  const esperar = ms => new Promise(r => setTimeout(r, ms));
 
   async function textoError(r) {
     try { const j = await r.json(); return j.error?.message || `Error ${r.status}`; }
@@ -222,25 +228,34 @@ Límites sanos (muy importantes):
   }
 
   async function preguntar() {
-    const m = await elegirModelo();
+    const lista = await listaModelosChat();
     const ultimos = historial.slice(-40);
-    const cuerpo = {
+    const cuerpo = JSON.stringify({
       systemInstruction: { parts: [{ text: personalidad() }] },
       contents: ultimos.map(x => ({ role: x.role, parts: [{ text: x.text }] })),
       generationConfig: { temperature: 0.9, maxOutputTokens: 600 }
-    };
-    const r = await fetch(`${API}/models/${m}:generateContent?key=${encodeURIComponent(clave)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
     });
-    if (!r.ok) {
-      const err = await textoError(r);
-      if (r.status === 404) { modelo = ''; guardar('novia_modelo', ''); } // el modelo ya no existe: buscar otro la próxima
-      throw new Error(err);
+    let ultimoError = null;
+    for (const m of lista) {
+      for (let intento = 0; intento < 2; intento++) {
+        const r = await fetch(`${API}/models/${m}:generateContent?key=${encodeURIComponent(clave)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: cuerpo
+        });
+        if (r.ok) {
+          modelo = m; guardar('novia_modelo', modelo);
+          const j = await r.json();
+          const texto = j.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
+          return texto || 'Ay, me quedé en blanco 🙈 ¿me lo repites?';
+        }
+        const err = await textoError(r);
+        ultimoError = new Error(`${r.status} ${err}`);
+        if (r.status === 400 || r.status === 401 || r.status === 403) throw ultimoError; // problema de la clave
+        const saturado = r.status === 503 || r.status === 500 || /high demand|overloaded|unavailable/i.test(err);
+        if (saturado && intento === 0) { estado.textContent = 'escribiendo... (Gemini anda ocupado)'; await esperar(2500); continue; }
+        break; // probar con el siguiente modelo
+      }
     }
-    const j = await r.json();
-    const texto = j.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-    if (!texto) return 'Ay, me quedé en blanco 🙈 ¿me lo repites?';
-    return texto;
+    throw ultimoError || new Error('sin respuesta');
   }
 
   async function enviar(texto) {
@@ -249,7 +264,7 @@ Límites sanos (muy importantes):
     if (!clave) { mostrar('capaClave'); return; }
     ocupada = true;
     entrada.value = ''; ajustarAltura();
-    burbuja(texto, 'yo');
+    const miBurbuja = burbuja(texto, 'yo');
     historial.push({ role: 'user', text: texto });
     guardar('novia_historial', historial);
     estado.textContent = 'escribiendo...';
@@ -265,10 +280,14 @@ Límites sanos (muy importantes):
     } catch (e) {
       pens.remove();
       historial.pop(); guardar('novia_historial', historial);
+      miBurbuja.remove();
+      entrada.value = texto; ajustarAltura(); // tu mensaje regresa a la caja para reenviarlo
       const msg = String(e.message || e);
-      if (/API key|API_KEY|permission|unauthori/i.test(msg)) aviso('Tu clave de Gemini no funcionó. Revísala en ⚙️ Ajustes → Cambiar clave.');
-      else if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabaron las preguntas gratis por ahorita. Espera un ratito y vuelve a intentar.');
-      else aviso('No se pudo conectar: ' + msg);
+      if (/API key|API_KEY|permission|unauthori|^40[13]/i.test(msg)) aviso('Tu clave de Gemini no funcionó. Revísala en ⚙️ Ajustes → Cambiar clave.');
+      else if (/quota|rate|exhausted|429/i.test(msg)) aviso('Se acabaron las preguntas gratis por ahorita. Espera un ratito; tu mensaje quedó en la caja para reenviarlo.');
+      else if (/high demand|overloaded|unavailable|^50\d/i.test(msg)) aviso('Gemini anda saturado ahorita, no es tu culpa. Tu mensaje quedó en la caja: dale enviar otra vez en un ratito.');
+      else if (/Failed to fetch|NetworkError|network/i.test(msg)) aviso('Parece que no hay internet. Tu mensaje quedó en la caja para reenviarlo.');
+      else aviso('No se pudo conectar (' + msg + '). Tu mensaje quedó en la caja para reenviarlo.');
     } finally {
       estado.textContent = 'en línea';
       ocupada = false;
@@ -518,7 +537,7 @@ Límites sanos (muy importantes):
     const n = $('inNombre').value.trim() || 'José';
     if (k.length < 20 || /\s/.test(k)) { $('msgClave').textContent = 'Esa clave se ve incompleta. Cópiala completa con el botón de copiar.'; return; }
     $('msgClave').textContent = 'Revisando la clave...';
-    clave = k; nombre = n; modelo = ''; modeloVoz = ''; modelosVoz = null;
+    clave = k; nombre = n; modelo = ''; modelosChat = null; modeloVoz = ''; modelosVoz = null;
     for (const x in agotados) delete agotados[x]; guardar('novia_vozAgotados', agotados);
     try {
       await elegirModelo();
